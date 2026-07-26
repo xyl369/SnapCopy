@@ -15,18 +15,25 @@ final class RegionSelectionController {
     func begin() {
         tearDown()
 
-        // 1) Freeze every display FIRST — before overlays or activation — so Dock
-        //    app menus / folder stacks / popovers are still on screen in the buffer.
-        frozenScreens = ScreenCaptureService.freezeAllScreens()
-        guard !frozenScreens.isEmpty else {
-            onCaptured?(.failure(.captureFailed("Cannot freeze screen (check Screen Recording permission)")))
-            return
+        // Freeze first (async SCK Retina capture), then show overlays — never activate
+        // before freeze, or Dock menus / popovers dismiss and vanish from the buffer.
+        Task { @MainActor in
+            let frozen = await ScreenCaptureService.freezeAllScreens()
+            guard !frozen.isEmpty else {
+                self.onCaptured?(.failure(.captureFailed("Cannot freeze screen (check Screen Recording permission)")))
+                return
+            }
+            // If user cancelled while freezing, tearDown cleared state — abort quietly.
+            // (capturing flag lives in AppFlow; if begin was re-entered, windows may exist.)
+            self.presentOverlays(frozenScreens: frozen)
         }
+    }
 
-        // 2) Window list for hover (does not steal focus).
+    private func presentOverlays(frozenScreens: [ScreenCaptureService.FrozenScreen]) {
+        self.frozenScreens = frozenScreens
+
         let capturedWindows = WindowHitTester.listCompleteWindows()
 
-        // 3) Overlays use the same freeze buffers for preview + Confirm crop.
         for screen in NSScreen.screens {
             let freeze = frozenScreens.first { $0.frame == screen.frame }
                 ?? frozenScreens.first { $0.frame.intersects(screen.frame) }
@@ -44,7 +51,6 @@ final class RegionSelectionController {
             windows.append(win)
             win.makeKeyAndOrderFront(nil)
         }
-        // Activate only after freeze is done — activating earlier dismisses Dock UI.
         NSApp.activate(ignoringOtherApps: true)
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -155,7 +161,13 @@ final class RegionSelectionView: NSView {
     /// Complete windows captured at selection start (front → back).
     var capturedWindows: [CapturedWindowInfo] = []
 
-    private enum Mode { case idle, dragging, adjusting }
+    private enum Mode {
+        case idle
+        case dragging
+        case adjusting
+        /// Confirm already fired — ignore further mouse/hover so full-screen preview cannot flash back.
+        case committed
+    }
     private enum DragKind {
         case create
         case move
@@ -173,10 +185,12 @@ final class RegionSelectionView: NSView {
     /// Where the drag ended — buttons anchor to this side of the selection.
     private var dragEndPoint = CGPoint.zero
     private let handleSize: CGFloat = 8
-    /// Hover preview of a complete window under the cursor (idle only). Nil = no window.
+    /// Hover preview of a complete window under the cursor (idle only). Nil = no preview.
     private var hoverPreview: CGRect?
     /// mouseDown started a potential click (not yet a drag).
     private var clickCandidate = false
+    /// True when clickCandidate began while already in adjusting (outside-click to redo).
+    private var clickFromAdjusting = false
     private let dragThreshold: CGFloat = 4
 
     private lazy var confirmButton: NSButton = makeButton("Confirm", kind: .confirm) { [weak self] in
@@ -213,7 +227,7 @@ final class RegionSelectionView: NSView {
         trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(
             rect: bounds,
-            options: [.activeInKeyWindow, .mouseMoved, .inVisibleRect, .cursorUpdate],
+            options: [.activeInKeyWindow, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect, .cursorUpdate],
             owner: self,
             userInfo: nil
         ))
@@ -222,8 +236,15 @@ final class RegionSelectionView: NSView {
     @discardableResult
     func confirmIfAdjusting() -> Bool {
         guard mode == .adjusting, selection.width >= 4, selection.height >= 4 else { return false }
+        let rect = selection.integral
+        // Lock interaction immediately so hover/full-screen cannot reappear after Confirm.
+        mode = .committed
+        hoverPreview = nil
+        clickCandidate = false
+        clickFromAdjusting = false
         hideButtons()
-        onConfirmLocal?(selection.integral)
+        needsDisplay = true
+        onConfirmLocal?(rect)
         return true
     }
 
@@ -264,11 +285,16 @@ final class RegionSelectionView: NSView {
         layoutButtons()
         confirmButton.isHidden = false
         cancelButton.isHidden = false
+        let p = convert(window?.mouseLocationOutsideOfEventStream ?? .zero, from: nil)
+        updateCursor(at: p)
     }
 
     private func hideButtons() {
         confirmButton.isHidden = true
         cancelButton.isHidden = true
+        if mode != .committed {
+            NSCursor.crosshair.set()
+        }
     }
 
     private func layoutButtons() {
@@ -312,9 +338,14 @@ final class RegionSelectionView: NSView {
         guard mode == .idle else { return }
         let global = NSEvent.mouseLocation
 
+        // Mouse not on this display → clear preview (do NOT paint full-screen on idle screens).
+        guard screenFrame.contains(global) else {
+            setHoverPreview(nil)
+            return
+        }
+
         // Prefer a fully-visible complete window under the cursor.
-        if screenFrame.contains(global),
-           let hit = WindowHitTester.frontmostWindow(atGlobalPoint: global, in: capturedWindows) {
+        if let hit = WindowHitTester.frontmostWindow(atGlobalPoint: global, in: capturedWindows) {
             let local = WindowHitTester.localFlippedRect(globalBounds: hit.bounds, screenFrame: screenFrame)
             if local.width >= 4, local.height >= 4 {
                 setHoverPreview(local)
@@ -322,8 +353,7 @@ final class RegionSelectionView: NSView {
             }
         }
 
-        // Outside any selectable window (desktop gap, menu bar, Dock, screen edge)
-        // → full-screen preview on this display.
+        // On this display but outside any selectable window → full-screen preview.
         setHoverPreview(bounds)
     }
 
@@ -334,6 +364,38 @@ final class RegionSelectionView: NSView {
         needsDisplay = true
     }
 
+    private func hitsActionButtons(_ p: CGPoint) -> Bool {
+        // Slight pad for click reliability; cursor uses exact frames via hitsActionButtonsExact.
+        let pad: CGFloat = 4
+        if !confirmButton.isHidden, confirmButton.frame.insetBy(dx: -pad, dy: -pad).contains(p) {
+            return true
+        }
+        if !cancelButton.isHidden, cancelButton.frame.insetBy(dx: -pad, dy: -pad).contains(p) {
+            return true
+        }
+        return false
+    }
+
+    /// Exact Confirm / Cancel visual bounds — used for arrow cursor (no extra pad).
+    private func hitsActionButtonsExact(_ p: CGPoint) -> Bool {
+        if !confirmButton.isHidden, confirmButton.frame.contains(p) { return true }
+        if !cancelButton.isHidden, cancelButton.frame.contains(p) { return true }
+        return false
+    }
+
+    /// Crosshair over the capture surface; system arrow only over Confirm / Cancel.
+    private func updateCursor(at p: CGPoint) {
+        if mode == .committed {
+            NSCursor.arrow.set()
+            return
+        }
+        if mode == .adjusting, hitsActionButtonsExact(p) {
+            NSCursor.arrow.set()
+        } else {
+            NSCursor.crosshair.set()
+        }
+    }
+
     /// Lock a rect into adjusting mode (window click or full-screen click).
     private func lockSelection(_ rect: CGRect, at point: CGPoint) {
         let locked = clamp(rect.integral)
@@ -342,60 +404,81 @@ final class RegionSelectionView: NSView {
         selection = locked
         dragEndPoint = point
         mode = .adjusting
+        clickCandidate = false
+        clickFromAdjusting = false
         showButtons()
         needsDisplay = true
+        updateCursor(at: point)
     }
 
     override func mouseMoved(with event: NSEvent) {
-        updateHoverPreview(atLocalPoint: convert(event.locationInWindow, from: nil))
+        guard mode != .committed else { return }
+        let p = convert(event.locationInWindow, from: nil)
+        updateHoverPreview(atLocalPoint: p)
+        updateCursor(at: p)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        guard mode == .idle else { return }
+        setHoverPreview(nil)
     }
 
     override func cursorUpdate(with event: NSEvent) {
-        NSCursor.crosshair.set()
+        let p = convert(event.locationInWindow, from: nil)
+        updateCursor(at: p)
     }
 
     override func mouseDown(with event: NSEvent) {
+        guard mode != .committed else { return }
         let p = convert(event.locationInWindow, from: nil)
         dragStartMouse = p
 
         if mode == .adjusting {
+            // Confirm / Cancel must win — never treat those hits as “outside selection”.
+            if hitsActionButtons(p) {
+                clickCandidate = false
+                clickFromAdjusting = false
+                return
+            }
             if let handle = hitHandle(at: p) {
                 dragKind = .resize(handle)
                 dragStartSelection = selection
                 clickCandidate = false
+                clickFromAdjusting = false
                 return
             }
             if selection.insetBy(dx: -2, dy: -2).contains(p) {
                 dragKind = .move
                 dragStartSelection = selection
                 clickCandidate = false
+                clickFromAdjusting = false
                 return
             }
-            // Click outside current selection → start a new custom drag (existing behavior).
-            clickCandidate = false
-            hoverPreview = nil
-            mode = .dragging
-            dragKind = .create
-            selection = CGRect(origin: p, size: .zero)
-            hideButtons()
-            needsDisplay = true
+            // Outside selection: wait for click vs drag. Do NOT wipe the current frame yet —
+            // a bare click used to fall back to idle + full-screen preview and look like a bug.
+            clickCandidate = true
+            clickFromAdjusting = true
+            dragKind = nil
             return
         }
 
         // Idle: wait to see if this is a click (window / full-screen) or a drag (custom region).
         clickCandidate = true
+        clickFromAdjusting = false
         dragKind = nil
     }
 
     override func mouseDragged(with event: NSEvent) {
+        guard mode != .committed else { return }
         let p = convert(event.locationInWindow, from: nil)
 
         if clickCandidate {
             let dx = abs(p.x - dragStartMouse.x)
             let dy = abs(p.y - dragStartMouse.y)
             if dx >= dragThreshold || dy >= dragThreshold {
-                // Promote to custom drag selection — ignore window hover.
+                // Promote to custom drag selection — ignore window hover / previous lock.
                 clickCandidate = false
+                clickFromAdjusting = false
                 hoverPreview = nil
                 mode = .dragging
                 dragKind = .create
@@ -426,17 +509,32 @@ final class RegionSelectionView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        guard mode != .committed else { return }
         let p = convert(event.locationInWindow, from: nil)
         dragEndPoint = p
         defer { dragKind = nil }
 
         if clickCandidate {
+            let fromAdjusting = clickFromAdjusting
             clickCandidate = false
-            // Click without drag: lock hovered window, or full screen if no window.
+            clickFromAdjusting = false
+
+            if fromAdjusting {
+                // Bare click outside a locked free/window selection → back to idle hover.
+                // Do not auto-lock full screen here; that was the “confirm then full screen” flash.
+                mode = .idle
+                selection = .zero
+                hideButtons()
+                updateHoverPreview()
+                needsDisplay = true
+                return
+            }
+
+            // Idle click without drag: lock hovered window, or full screen if no window.
             updateHoverPreview()
             if let preview = hoverPreview {
                 lockSelection(preview, at: p)
-            } else {
+            } else if screenFrame.contains(NSEvent.mouseLocation) {
                 lockSelection(bounds, at: p)
             }
             return
@@ -454,6 +552,9 @@ final class RegionSelectionView: NSView {
                 needsDisplay = true
                 return
             }
+            // Free-drag finished → adjusting only. Clear any leftover hover so full-screen
+            // dashed frame cannot paint over / after this custom selection.
+            hoverPreview = nil
             mode = .adjusting
             showButtons()
             needsDisplay = true
@@ -463,6 +564,7 @@ final class RegionSelectionView: NSView {
         selection = clamp(selection).integral
         layoutButtons()
         needsDisplay = true
+        updateCursor(at: p)
     }
 
     private func hitHandle(at p: CGPoint) -> ResizeHandle? {
@@ -605,6 +707,7 @@ final class RegionSelectionView: NSView {
                 ring.stroke()
             }
         }
+        // .committed keeps the same locked frame painted until the overlay is torn down.
     }
 
     private func drawSizeBadge(for r: CGRect) {

@@ -4,10 +4,14 @@ import Foundation
 import ScreenCaptureKit
 
 enum ScreenCaptureService {
-    /// One frozen display buffer taken at ⌥Z press time.
+    /// One frozen display buffer taken at ⌥Z press time (native Retina pixels).
     struct FrozenScreen {
+        /// AppKit global frame (points, bottom-left origin).
         let frame: CGRect
+        /// Full-display bitmap at `scale` pixels per point.
         let image: CGImage
+        /// backingScaleFactor used when capturing (typically 2 on Retina).
+        let scale: CGFloat
     }
 
     /// Capture on-screen pixels in an AppKit global rect (origin bottom-left).
@@ -53,6 +57,7 @@ enum ScreenCaptureService {
             return .failure(.captureFailed("Selection outside frozen screen"))
         }
 
+        // Use the capture scale (Retina) — never assume 1x.
         let scaleX = CGFloat(screen.image.width) / screen.frame.width
         let scaleY = CGFloat(screen.image.height) / screen.frame.height
 
@@ -61,15 +66,15 @@ enum ScreenCaptureService {
         let localYFromBottom = intersection.minY - screen.frame.minY
         let localYFromTop = screen.frame.height - localYFromBottom - intersection.height
 
-        var pixelRect = CGRect(
-            x: localX * scaleX,
-            y: localYFromTop * scaleY,
-            width: intersection.width * scaleX,
-            height: intersection.height * scaleY
-        ).integral
+        // Floor origin / ceil size so we don't drop a Retina pixel row/column to rounding.
+        let px = floor(localX * scaleX)
+        let py = floor(localYFromTop * scaleY)
+        let pw = ceil(intersection.width * scaleX)
+        let ph = ceil(intersection.height * scaleY)
 
+        var pixelRect = CGRect(x: px, y: py, width: pw, height: ph)
         let imageBounds = CGRect(x: 0, y: 0, width: screen.image.width, height: screen.image.height)
-        pixelRect = pixelRect.intersection(imageBounds)
+        pixelRect = pixelRect.intersection(imageBounds).integral
         guard pixelRect.width >= 1, pixelRect.height >= 1,
               let cropped = screen.image.cropping(to: pixelRect)
         else {
@@ -87,22 +92,28 @@ enum ScreenCaptureService {
             throw SnapCopyError.captureFailed("Display not found")
         }
 
-        // SC uses top-left relative to display
+        let scale = scale(for: display)
+        // SC uses top-left relative to display (points).
         let displayBounds = CGDisplayBounds(display.displayID)
         let crop = CGRect(
             x: rect.minX - displayBounds.minX,
-            y: displayBounds.maxY - rect.maxY, // flip to top-left within display
+            y: displayBounds.maxY - rect.maxY,
             width: rect.width,
             height: rect.height
-        ).integral
+        )
 
         let filter = SCContentFilter(display: display, excludingWindows: [])
         let config = SCStreamConfiguration()
         config.sourceRect = crop
-        config.width = max(1, Int(crop.width) * scale(for: display))
-        config.height = max(1, Int(crop.height) * scale(for: display))
+        // Native Retina output — use display pixel size ratio, not a guessed 1x buffer.
+        config.width = max(1, Int((crop.width * CGFloat(scale)).rounded(.up)))
+        config.height = max(1, Int((crop.height * CGFloat(scale)).rounded(.up)))
+        config.scalesToFit = false
         config.showsCursor = false
         config.capturesAudio = false
+        if #available(macOS 14.2, *) {
+            config.captureResolution = .best
+        }
 
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
     }
@@ -118,15 +129,42 @@ enum ScreenCaptureService {
         guard let screen = NSScreen.screens.first(where: {
             ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == display.displayID
         }) else { return 2 }
-        return max(1, Int(screen.backingScaleFactor))
+        return max(1, Int(screen.backingScaleFactor.rounded()))
     }
 
-    // MARK: - Freeze at hotkey press
+    // MARK: - Freeze at hotkey press (Retina)
 
-    /// Full-screen snapshot of one display. Call for every screen *before* showing overlays
-    /// or activating SnapCopy — otherwise Dock menus / popovers dismiss and are missing.
-    static func captureScreenSnapshot(_ screen: NSScreen) -> CGImage? {
-        // optionOnScreenOnly includes Dock, menus, and popovers visible at this instant.
+    /// Full-display freeze via ScreenCaptureKit at native pixel resolution.
+    @available(macOS 14.0, *)
+    private static func captureScreenSnapshotSCK(_ screen: NSScreen) async -> CGImage? {
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            guard let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
+                  let display = content.displays.first(where: { $0.displayID == displayID })
+            else { return nil }
+
+            // SCDisplay.width/height are in points (same as NSScreen.frame), not pixels.
+            // Multiply by backingScaleFactor for native Retina capture resolution.
+            let scale = max(1, screen.backingScaleFactor)
+            let filter = SCContentFilter(display: display, excludingWindows: [])
+            let config = SCStreamConfiguration()
+            config.width = max(1, Int((CGFloat(display.width) * scale).rounded()))
+            config.height = max(1, Int((CGFloat(display.height) * scale).rounded()))
+            config.scalesToFit = false
+            config.showsCursor = false
+            config.capturesAudio = false
+            if #available(macOS 14.2, *) {
+                config.captureResolution = .best
+            }
+
+            return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Legacy fallback (may be soft / unavailable on newer macOS). Prefer SCK.
+    private static func captureScreenSnapshotLegacy(_ screen: NSScreen) -> CGImage? {
         CGWindowListCreateImage(
             screen.frame,
             .optionOnScreenOnly,
@@ -135,19 +173,40 @@ enum ScreenCaptureService {
         )
     }
 
-    /// Freeze every display now. Must run before overlay windows / app activation.
-    static func freezeAllScreens() -> [FrozenScreen] {
-        NSScreen.screens.compactMap { screen in
-            guard let image = captureScreenSnapshot(screen) else { return nil }
-            return FrozenScreen(frame: screen.frame, image: image)
+    /// Freeze every display at native Retina pixels. Call before overlays / activation.
+    static func freezeAllScreens() async -> [FrozenScreen] {
+        var result: [FrozenScreen] = []
+        result.reserveCapacity(NSScreen.screens.count)
+
+        for screen in NSScreen.screens {
+            let scale = max(1, screen.backingScaleFactor)
+            var image: CGImage?
+            if #available(macOS 14.0, *) {
+                image = await captureScreenSnapshotSCK(screen)
+            }
+            if image == nil {
+                image = captureScreenSnapshotLegacy(screen)
+            }
+            guard let image else { continue }
+
+            // Guard against accidental 1x buffers on Retina (would look soft when pasted).
+            let expectedW = screen.frame.width * scale
+            if scale >= 1.5, CGFloat(image.width) + 1 < expectedW * 0.75 {
+                // Try once more via SCK if legacy returned a soft buffer.
+                if #available(macOS 14.0, *), let retry = await captureScreenSnapshotSCK(screen) {
+                    result.append(FrozenScreen(frame: screen.frame, image: retry, scale: scale))
+                    continue
+                }
+            }
+
+            result.append(FrozenScreen(frame: screen.frame, image: image, scale: scale))
         }
+        return result
     }
 
-    // MARK: - Legacy
+    // MARK: - Legacy live capture
 
     private static func captureLegacy(rect: CGRect) -> Result<CGImage, SnapCopyError> {
-        // CRITICAL: optionOnScreenOnly — captures windows + desktop in rect.
-        // optionOnScreenBelowWindow + kCGNullWindowID → often only wallpaper.
         guard let image = CGWindowListCreateImage(
             rect,
             .optionOnScreenOnly,

@@ -53,14 +53,45 @@ final class AppFlow: ObservableObject {
     }
 
     private func copyImage(_ image: CGImage) {
-        let rep = NSBitmapImageRep(cgImage: image)
-        guard let tiff = rep.tiffRepresentation else { return }
+        let scale = Self.pasteboardScale(for: image)
+
+        // TIFF gets a Retina "point size" hint so native Mac apps (Preview, Pages, Notes,
+        // Mail) paste the image at its correct on-screen physical size.
+        let tiffRep = NSBitmapImageRep(cgImage: image)
+        if scale > 1.01 {
+            tiffRep.size = NSSize(
+                width: CGFloat(image.width) / scale,
+                height: CGFloat(image.height) / scale
+            )
+        }
+
+        // PNG is kept at its natural 1:1 pixel size with no DPI/size hint. Most web upload
+        // pipelines (browser paste → File → upload) read raw pixel dimensions directly;
+        // an embedded Retina hint on that representation is unnecessary and, on some sites,
+        // gets treated as a signal to downscale before upload. A separate, hint-free rep
+        // removes that ambiguity while the underlying pixels stay identical either way.
+        let pngRep = NSBitmapImageRep(cgImage: image)
+
+        guard let tiff = tiffRep.tiffRepresentation else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setData(tiff, forType: .tiff)
-        if let png = rep.representation(using: .png, properties: [:]) {
+        if let png = pngRep.representation(using: .png, properties: [:]) {
             pb.setData(png, forType: .png)
         }
-        log.info("copied \(image.width)x\(image.height)")
+        log.info("copied \(image.width)x\(image.height) px @\(scale, privacy: .public)x")
+    }
+
+    /// Prefer a screen whose full frame matches the bitmap; otherwise main Retina scale.
+    private static func pasteboardScale(for image: CGImage) -> CGFloat {
+        let w = CGFloat(image.width)
+        let h = CGFloat(image.height)
+        for screen in NSScreen.screens {
+            let s = screen.backingScaleFactor
+            if abs(w / s - screen.frame.width) < 2, abs(h / s - screen.frame.height) < 2 {
+                return s
+            }
+        }
+        return max(1, NSScreen.main?.backingScaleFactor ?? 2)
     }
 }

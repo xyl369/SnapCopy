@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.7] — 2026-07-26
+
+### Fixed
+
+- Freeze-frame capture (⌥Z backdrop) now requests native pixel resolution from ScreenCaptureKit instead of a 1x point-sized buffer, fixing soft/blurry screenshots on Retina displays
+- Clipboard PNG data no longer carries an embedded Retina size hint, avoiding double-downscaling by third-party paste/upload pipelines that rasterize pasted images at their reported point size
+
+## [0.1.6] — 2026-07-26
+
+### Fixed
+
+- After a free-drag selection, Confirm no longer flashes a full-screen hover frame (committed state + safer outside-click handling)
+- Multi-display idle overlays no longer paint a full-screen preview when the cursor is on another screen
+
+### Improved
+
+- Crosshair switches to the system arrow over Confirm / Cancel, and stays crosshair elsewhere
+
 ## [0.1.5] — 2026-07-26
 
 ### Fixed
