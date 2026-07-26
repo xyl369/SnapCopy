@@ -4,8 +4,15 @@ import Foundation
 import ScreenCaptureKit
 
 enum ScreenCaptureService {
+    /// One frozen display buffer taken at ⌥Z press time.
+    struct FrozenScreen {
+        let frame: CGRect
+        let image: CGImage
+    }
+
     /// Capture on-screen pixels in an AppKit global rect (origin bottom-left).
-    /// Must use on-screen windows — NOT `BelowWindow` + null ID (that yields bare desktop).
+    /// Prefer `cropFromFrozen` when a freeze buffer exists — live capture after the overlay
+    /// dismisses Dock menus / popovers that were visible at hotkey press.
     static func capture(rect: CGRect) async -> Result<CGImage, SnapCopyError> {
         guard rect.width >= 2, rect.height >= 2 else {
             return .failure(.captureFailed("Selection too small"))
@@ -21,6 +28,54 @@ enum ScreenCaptureService {
         }
 
         return captureLegacy(rect: rect)
+    }
+
+    /// Crop the selection from freeze buffers taken at hotkey press.
+    /// This is the primary Confirm path so Dock popovers / menus stay in the result.
+    static func cropFromFrozen(_ frozen: [FrozenScreen], rect: CGRect) -> Result<CGImage, SnapCopyError> {
+        guard rect.width >= 2, rect.height >= 2 else {
+            return .failure(.captureFailed("Selection too small"))
+        }
+        guard !frozen.isEmpty else {
+            return .failure(.captureFailed("No frozen screen buffer"))
+        }
+
+        // Prefer the display that covers the largest share of the selection.
+        let best = frozen.max { a, b in
+            area(a.frame.intersection(rect)) < area(b.frame.intersection(rect))
+        }
+        guard let screen = best else {
+            return .failure(.captureFailed("No frozen screen buffer"))
+        }
+
+        let intersection = screen.frame.intersection(rect)
+        guard !intersection.isNull, intersection.width >= 2, intersection.height >= 2 else {
+            return .failure(.captureFailed("Selection outside frozen screen"))
+        }
+
+        let scaleX = CGFloat(screen.image.width) / screen.frame.width
+        let scaleY = CGFloat(screen.image.height) / screen.frame.height
+
+        // Selection is AppKit bottom-left; CGImage crop is top-left within the image.
+        let localX = intersection.minX - screen.frame.minX
+        let localYFromBottom = intersection.minY - screen.frame.minY
+        let localYFromTop = screen.frame.height - localYFromBottom - intersection.height
+
+        var pixelRect = CGRect(
+            x: localX * scaleX,
+            y: localYFromTop * scaleY,
+            width: intersection.width * scaleX,
+            height: intersection.height * scaleY
+        ).integral
+
+        let imageBounds = CGRect(x: 0, y: 0, width: screen.image.width, height: screen.image.height)
+        pixelRect = pixelRect.intersection(imageBounds)
+        guard pixelRect.width >= 1, pixelRect.height >= 1,
+              let cropped = screen.image.cropping(to: pixelRect)
+        else {
+            return .failure(.captureFailed("Cannot crop frozen screen"))
+        }
+        return .success(cropped)
     }
 
     // MARK: - ScreenCaptureKit (macOS 14+)
@@ -66,19 +121,26 @@ enum ScreenCaptureService {
         return max(1, Int(screen.backingScaleFactor))
     }
 
-    // MARK: - Frozen backdrop for selection UI
+    // MARK: - Freeze at hotkey press
 
-    /// Fast, synchronous full-screen snapshot used only as a frozen backdrop while the user
-    /// is dragging out a selection — so the desktop looks fixed at the moment the shortcut was
-    /// pressed, instead of showing live/moving content underneath the dimmed overlay.
-    /// This does not affect the actual capture path used when the selection is confirmed.
+    /// Full-screen snapshot of one display. Call for every screen *before* showing overlays
+    /// or activating SnapCopy — otherwise Dock menus / popovers dismiss and are missing.
     static func captureScreenSnapshot(_ screen: NSScreen) -> CGImage? {
+        // optionOnScreenOnly includes Dock, menus, and popovers visible at this instant.
         CGWindowListCreateImage(
             screen.frame,
             .optionOnScreenOnly,
             kCGNullWindowID,
             [.bestResolution]
         )
+    }
+
+    /// Freeze every display now. Must run before overlay windows / app activation.
+    static func freezeAllScreens() -> [FrozenScreen] {
+        NSScreen.screens.compactMap { screen in
+            guard let image = captureScreenSnapshot(screen) else { return nil }
+            return FrozenScreen(frame: screen.frame, image: image)
+        }
     }
 
     // MARK: - Legacy
@@ -95,5 +157,10 @@ enum ScreenCaptureService {
             return .failure(.captureFailed("Cannot capture screen (check Screen Recording permission)"))
         }
         return .success(image)
+    }
+
+    private static func area(_ r: CGRect) -> CGFloat {
+        guard !r.isNull else { return 0 }
+        return max(0, r.width) * max(0, r.height)
     }
 }

@@ -15,7 +15,7 @@
 SnapCopy is a lightweight macOS menu bar utility that does exactly two things:
 
 1. **Select to copy** — Highlight text and a small **Copy** button appears below your cursor. Click elsewhere to dismiss.
-2. **Region screenshot** — Press **⌥Z**. The desktop freezes; hover a fully visible window (or outside windows for full screen), click to lock, adjust if needed, then Confirm — the image goes to your clipboard. Drag still works for a custom region.
+2. **Region screenshot** — Press **⌥Z**. The desktop freezes first (including Dock menus/popovers); hover a fully visible window (or outside windows for full screen), click to lock, adjust if needed, then Confirm — the image is cropped from that freeze onto your clipboard. Drag still works for a custom region.
 
 Built for one job: select-to-copy plus a region screenshot hotkey.
 
@@ -110,7 +110,7 @@ Issues and PRs welcome. Please keep the scope: **local, minimal, no network**.
 SnapCopy 是一个轻量的 macOS 菜单栏工具，只做两件事：
 
 1. **划词复制** — 选中文字后，在鼠标下方弹出 **Copy**；点别处消失
-2. **区域截屏** — 按 **⌥Z**，桌面画面固定；悬停完整可见窗口（或窗口外预选整屏），点击锁定，可再调整后 Confirm，图片进入剪贴板。拖拽仍可自定义框选
+2. **区域截屏** — 按 **⌥Z**，先冻结整屏（含 Dock 弹出菜单等）；悬停完整可见窗口（或窗口外预选整屏），点击锁定，可再调整后 Confirm；最终图从冻结缓冲裁切进剪贴板。拖拽仍可自定义框选
 
 适合只要「选中即复制 + 快捷键截屏」的场景。
 

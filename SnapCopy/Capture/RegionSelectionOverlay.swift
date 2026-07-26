@@ -2,20 +2,39 @@ import AppKit
 import Foundation
 import ObjectiveC
 
-/// ⌥Z screenshot: drag to select → size badge / resize handles / Confirm · Cancel → capture.
+/// ⌥Z screenshot: freeze desktop → hover/drag select → Confirm crops from freeze.
 @MainActor
 final class RegionSelectionController {
     var onCaptured: ((Result<CGImage, SnapCopyError>) -> Void)?
 
     private var windows: [RegionSelectionWindow] = []
     private var keyMonitor: Any?
+    /// Pixel buffers taken at ⌥Z — Confirm crops from these, never live-recaptures.
+    private var frozenScreens: [ScreenCaptureService.FrozenScreen] = []
 
     func begin() {
         tearDown()
-        // Capture window list before overlay windows appear, so it matches the frozen backdrop.
+
+        // 1) Freeze every display FIRST — before overlays or activation — so Dock
+        //    app menus / folder stacks / popovers are still on screen in the buffer.
+        frozenScreens = ScreenCaptureService.freezeAllScreens()
+        guard !frozenScreens.isEmpty else {
+            onCaptured?(.failure(.captureFailed("Cannot freeze screen (check Screen Recording permission)")))
+            return
+        }
+
+        // 2) Window list for hover (does not steal focus).
         let capturedWindows = WindowHitTester.listCompleteWindows()
+
+        // 3) Overlays use the same freeze buffers for preview + Confirm crop.
         for screen in NSScreen.screens {
-            let win = RegionSelectionWindow(screen: screen, capturedWindows: capturedWindows)
+            let freeze = frozenScreens.first { $0.frame == screen.frame }
+                ?? frozenScreens.first { $0.frame.intersects(screen.frame) }
+            let win = RegionSelectionWindow(
+                screen: screen,
+                capturedWindows: capturedWindows,
+                frozenCGImage: freeze?.image
+            )
             win.onCommitGlobalAppKit = { [weak self] rect in
                 self?.finish(rectAppKit: rect)
             }
@@ -25,6 +44,7 @@ final class RegionSelectionController {
             windows.append(win)
             win.makeKeyAndOrderFront(nil)
         }
+        // Activate only after freeze is done — activating earlier dismisses Dock UI.
         NSApp.activate(ignoringOtherApps: true)
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -44,18 +64,17 @@ final class RegionSelectionController {
     }
 
     private func finish(rectAppKit: CGRect) {
+        let frozen = frozenScreens
         windows.forEach { $0.alphaValue = 0 }
         windows.forEach { $0.orderOut(nil) }
         tearDownMonitorsOnly()
+        windows.removeAll()
+        frozenScreens = []
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-            guard let self else { return }
-            self.windows.removeAll()
-            Task { @MainActor in
-                let result = await ScreenCaptureService.capture(rect: rectAppKit)
-                self.onCaptured?(result)
-            }
-        }
+        // Crop from the freeze taken at hotkey press — do not live-capture after
+        // overlays/focus change (that drops Dock popovers and other transient UI).
+        let result = ScreenCaptureService.cropFromFrozen(frozen, rect: rectAppKit)
+        onCaptured?(result)
     }
 
     private func abort(_ error: SnapCopyError) {
@@ -74,6 +93,7 @@ final class RegionSelectionController {
         tearDownMonitorsOnly()
         windows.forEach { $0.orderOut(nil) }
         windows.removeAll()
+        frozenScreens = []
     }
 }
 
@@ -83,7 +103,7 @@ final class RegionSelectionWindow: NSWindow {
     var onCancel: (() -> Void)?
     private let screenFrame: CGRect
 
-    init(screen: NSScreen, capturedWindows: [CapturedWindowInfo]) {
+    init(screen: NSScreen, capturedWindows: [CapturedWindowInfo], frozenCGImage: CGImage?) {
         self.screenFrame = screen.frame
         super.init(
             contentRect: screen.frame,
@@ -103,9 +123,8 @@ final class RegionSelectionWindow: NSWindow {
         let view = RegionSelectionView(frame: CGRect(origin: .zero, size: screen.frame.size))
         view.screenFrame = screen.frame
         view.capturedWindows = capturedWindows
-        // Keep the raw CGImage — NSImage(cgImage:)+draw(in:from:) mis-maps coords in a
-        // flipped view and shows a mirrored patch inside the selection.
-        view.frozenCGImage = ScreenCaptureService.captureScreenSnapshot(screen)
+        // Same freeze buffer used for preview painting and Confirm crop.
+        view.frozenCGImage = frozenCGImage
         view.onConfirmLocal = { [weak self] local in
             guard let self else { return }
             let global = CGRect(

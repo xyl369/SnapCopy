@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5] — 2026-07-26
+
+### Fixed
+
+- Screenshot Confirm now crops from the freeze taken at ⌥Z press, instead of live-recapturing after overlays dismiss Dock menus / popovers
+- Freeze all displays before showing overlays or activating the app, so transient Dock UI is included in the buffer
+
 ## [0.1.4] — 2026-07-26
 
 ### Added
