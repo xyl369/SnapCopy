@@ -64,25 +64,26 @@ enum AXSelectionService {
 
         let element = focusedRef as! AXUIElement
         let role = stringAttribute(element, kAXRoleAttribute as String)
-        // File lists, buttons, links, etc. are not text-selection controls.
-        if let role, nonTextRoles.contains(role) { return nil }
+        // Hard chrome only — Notion / docs tables often focus AXGroup / AXCell / AXWebArea.
+        if let role, hardNonTextRoles.contains(role) { return nil }
 
-        // Require a non-zero selection range — avoid focus-only on filename controls.
-        guard selectedRangeLength(element) > 0 else { return nil }
-
+        // Prefer real selected-text range; some web apps omit range but still expose selected text.
+        let rangeLen = selectedRangeLength(element)
         if let text = readSelectedText(element) {
-            return Snapshot(text: text, bounds: selectionBounds(for: element), role: role)
+            if rangeLen > 0 || text.count >= 1 {
+                return Snapshot(text: text, bounds: selectionBounds(for: element), role: role)
+            }
         }
         return nil
     }
 
-    private static let nonTextRoles: Set<String> = [
+    /// Roles that are never text selection hosts (keep Group/Cell/Table out — web docs use them).
+    private static let hardNonTextRoles: Set<String> = [
         "AXButton", "AXCheckBox", "AXRadioButton", "AXPopUpButton", "AXMenuButton",
-        "AXLink", "AXImage", "AXList", "AXOutline", "AXTable", "AXRow", "AXColumn",
-        "AXCell", "AXGrid", "AXSplitter", "AXToolbar", "AXTabGroup", "AXSlider",
-        "AXIncrementor", "AXDisclosureTriangle", "AXBrowser", "AXComboBox",
+        "AXImage", "AXSplitter", "AXToolbar", "AXTabGroup", "AXSlider",
+        "AXIncrementor", "AXDisclosureTriangle", "AXComboBox",
         "AXMenu", "AXMenuItem", "AXMenuBar", "AXProgressIndicator", "AXBusyIndicator",
-        "AXScrollBar", "AXValueIndicator", "AXColorWell", "AXGroup",
+        "AXScrollBar", "AXValueIndicator", "AXColorWell",
     ]
 
     private static func stringAttribute(_ element: AXUIElement, _ name: String) -> String? {

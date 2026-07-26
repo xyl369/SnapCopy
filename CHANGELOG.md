@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.2] — 2026-07-24
+
+### Improved
+
+- Screenshot Confirm / Cancel buttons: solid high-contrast colors on the dim overlay
+- Select-to-copy on Notion-style / table web pages: allow AX Group/Cell hosts; restore smart ⌘C fallback when AX cannot read the selection
+- Fewer false tips when dragging a browser window: ignore unchanged selection on large moves; limit clipboard fallback to selection-like drag distances
+
 ## [0.1.1] — 2026-07-24
 
 ### Fixed

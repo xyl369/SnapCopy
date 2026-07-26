@@ -14,8 +14,16 @@ final class SelectionWatcher {
     private var monitors: [Any] = []
     private var downPoint: CGPoint?
     private var dragged = false
+    /// AX selection text at mouse-down — used to ignore chrome/window drags that don't change selection.
+    private var selectionAtDown: String?
     private var lastShown: String?
     private var busy = false
+    private var lastShowAt: Date = .distantPast
+
+    /// Ignore tiny jitters.
+    private let minDragDistance: CGFloat = 10
+    /// Unchanged AX selection + move beyond this → window / chrome drag.
+    private let chromeDragDistance: CGFloat = 40
 
     private init() {}
 
@@ -66,20 +74,29 @@ final class SelectionWatcher {
     private func onDown(_ event: NSEvent) {
         downPoint = NSEvent.mouseLocation
         dragged = false
+        selectionAtDown = AXSelectionService.captureSelectedText()?.text
     }
 
     private func onDrag(_ event: NSEvent) {
         guard let start = downPoint else { return }
         let now = NSEvent.mouseLocation
-        if hypot(now.x - start.x, now.y - start.y) > 4 { dragged = true }
+        if hypot(now.x - start.x, now.y - start.y) > minDragDistance { dragged = true }
     }
 
     private func onUp(_ event: NSEvent) {
         guard !isPaused, !busy else { return }
         let isDrag = dragged
         let isDouble = event.clickCount >= 2
+        let start = downPoint
+        let end = NSEvent.mouseLocation
+        let dragDistance: CGFloat = {
+            guard let start else { return 0 }
+            return hypot(end.x - start.x, end.y - start.y)
+        }()
+        let before = selectionAtDown
         downPoint = nil
         dragged = false
+        selectionAtDown = nil
         guard isDrag || isDouble else { return }
 
         // Finder double-click opens PDF/image files; filename gets selected — skip copy tip.
@@ -87,12 +104,23 @@ final class SelectionWatcher {
             return
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
-            self?.captureAndShow()
+        // Slightly longer delay so the page finishes updating selection (Notion / docs tables).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) { [weak self] in
+            self?.captureAndShow(
+                isDrag: isDrag,
+                isDouble: isDouble,
+                dragDistance: dragDistance,
+                selectionAtDown: before
+            )
         }
     }
 
-    private func captureAndShow() {
+    private func captureAndShow(
+        isDrag: Bool,
+        isDouble: Bool,
+        dragDistance: CGFloat,
+        selectionAtDown: String?
+    ) {
         guard !isPaused, !busy else { return }
         busy = true
         defer { busy = false }
@@ -106,25 +134,52 @@ final class SelectionWatcher {
         if let snap = AXSelectionService.captureSelectedText() {
             text = snap.text
             fromAX = true
-        } else if PermissionGate.accessibilityOK {
-            // Clipboard fallback for Electron editors where AX selection is unavailable;
-            // on web pages, ⌘C on a file often copies the filename — filter those out.
+        } else if PermissionGate.accessibilityOK,
+                  Self.shouldUseClipboardFallback(isDrag: isDrag, isDouble: isDouble, dragDistance: dragDistance) {
+            // PopClip-style: browsers/Electron often hide selection from AX — brief ⌘C.
             text = ClipboardSelection.readSelectedText()
         }
 
-        guard let text, (1...8000).contains(text.count) else { return }
-        // Skip selections that look like filenames, not body text (cloud drives, attachment lists, etc.).
-        if Self.looksLikeFileNameSelection(text) { return }
-        if text == lastShown, CopyTip.shared.isVisible { return }
+        guard let text else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let minLen = isDrag ? 2 : 1
+        guard (minLen...8000).contains(trimmed.count) else { return }
 
-        lastShown = text
-        CopyTip.shared.show(text: text)
+        // Unchanged selection after a large drag → window / scrollbar / tab strip.
+        if isDrag,
+           dragDistance >= chromeDragDistance,
+           let before = selectionAtDown,
+           before == trimmed {
+            return
+        }
+
+        if Self.looksLikeFileNameSelection(trimmed) { return }
+        if trimmed == lastShown, CopyTip.shared.isVisible { return }
+        if trimmed == lastShown, Date().timeIntervalSince(lastShowAt) < 0.55 {
+            return
+        }
+
+        lastShown = trimmed
+        lastShowAt = Date()
+        CopyTip.shared.show(text: trimmed)
         AppFlow.shared.status = "Selected"
-        log.info("copy tip len=\(text.count) ax=\(fromAX)")
+        log.info("copy tip len=\(trimmed.count) ax=\(fromAX)")
     }
 
     private static func isFinderFrontmost() -> Bool {
         NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder"
+    }
+
+    /// Clipboard ⌘C when AX fails — same path top select-to-copy tools use in Chrome/Notion.
+    private static func shouldUseClipboardFallback(
+        isDrag: Bool,
+        isDouble: Bool,
+        dragDistance: CGFloat
+    ) -> Bool {
+        if isDouble { return true }
+        guard isDrag else { return false }
+        // Too short: jitter. Too long: likely dragging the browser window.
+        return dragDistance >= 10 && dragDistance <= 420
     }
 
     /// Single-line selection that looks like a filename (with extension) — common false positive on web pages.

@@ -141,14 +141,16 @@ final class RegionSelectionView: NSView {
     private var dragEndPoint = CGPoint.zero
     private let handleSize: CGFloat = 8
 
-    private lazy var confirmButton: NSButton = makeButton("Confirm") { [weak self] in
+    private lazy var confirmButton: NSButton = makeButton("Confirm", kind: .confirm) { [weak self] in
         self?.confirmIfAdjusting()
     }
-    private lazy var cancelButton: NSButton = makeButton("Cancel") { [weak self] in
+    private lazy var cancelButton: NSButton = makeButton("Cancel", kind: .cancel) { [weak self] in
         self?.hideButtons()
         self?.onCancel?()
     }
     private var buttonTargets: [ButtonTarget] = []
+
+    private enum ActionButtonKind { case confirm, cancel }
 
     override var isFlipped: Bool { true }
 
@@ -170,10 +172,32 @@ final class RegionSelectionView: NSView {
         return true
     }
 
-    private func makeButton(_ title: String, handler: @escaping () -> Void) -> NSButton {
+    /// Solid high-contrast buttons so they stay readable on the dimmed screenshot overlay.
+    private func makeButton(_ title: String, kind: ActionButtonKind, handler: @escaping () -> Void) -> NSButton {
         let btn = NSButton(title: title, target: nil, action: nil)
-        btn.bezelStyle = .rounded
-        btn.font = .systemFont(ofSize: 13, weight: .medium)
+        btn.bezelStyle = .flexiblePush
+        btn.isBordered = false
+        btn.setButtonType(.momentaryChange)
+        btn.wantsLayer = true
+        btn.layer?.cornerRadius = 7
+        btn.layer?.masksToBounds = true
+        let font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        switch kind {
+        case .confirm:
+            btn.layer?.backgroundColor = NSColor.systemBlue.cgColor
+            btn.attributedTitle = NSAttributedString(string: title, attributes: [
+                .font: font,
+                .foregroundColor: NSColor.white,
+            ])
+        case .cancel:
+            btn.layer?.backgroundColor = NSColor.white.cgColor
+            btn.layer?.borderWidth = 1
+            btn.layer?.borderColor = NSColor.black.withAlphaComponent(0.35).cgColor
+            btn.attributedTitle = NSAttributedString(string: title, attributes: [
+                .font: font,
+                .foregroundColor: NSColor.black.withAlphaComponent(0.88),
+            ])
+        }
         let target = ButtonTarget(handler)
         buttonTargets.append(target)
         btn.target = target
@@ -193,9 +217,9 @@ final class RegionSelectionView: NSView {
     }
 
     private func layoutButtons() {
-        let btnW: CGFloat = 72
-        let btnH: CGFloat = 28
-        let gap: CGFloat = 8
+        let btnW: CGFloat = 84
+        let btnH: CGFloat = 32
+        let gap: CGFloat = 10
         let totalW = btnW * 2 + gap
         let r = selection
 
