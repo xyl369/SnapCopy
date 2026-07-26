@@ -94,6 +94,14 @@ final class SelectionWatcher {
             return hypot(end.x - start.x, end.y - start.y)
         }()
         let before = selectionAtDown
+        let dragDX: CGFloat = {
+            guard let start else { return 0 }
+            return abs(end.x - start.x)
+        }()
+        let dragDY: CGFloat = {
+            guard let start else { return 0 }
+            return abs(end.y - start.y)
+        }()
         downPoint = nil
         dragged = false
         selectionAtDown = nil
@@ -110,6 +118,8 @@ final class SelectionWatcher {
                 isDrag: isDrag,
                 isDouble: isDouble,
                 dragDistance: dragDistance,
+                dragDX: dragDX,
+                dragDY: dragDY,
                 selectionAtDown: before
             )
         }
@@ -119,6 +129,8 @@ final class SelectionWatcher {
         isDrag: Bool,
         isDouble: Bool,
         dragDistance: CGFloat,
+        dragDX: CGFloat,
+        dragDY: CGFloat,
         selectionAtDown: String?
     ) {
         guard !isPaused, !busy else { return }
@@ -135,7 +147,13 @@ final class SelectionWatcher {
             text = snap.text
             fromAX = true
         } else if PermissionGate.accessibilityOK,
-                  Self.shouldUseClipboardFallback(isDrag: isDrag, isDouble: isDouble, dragDistance: dragDistance) {
+                  Self.shouldUseClipboardFallback(
+                    isDrag: isDrag,
+                    isDouble: isDouble,
+                    dragDistance: dragDistance,
+                    dragDX: dragDX,
+                    dragDY: dragDY
+                  ) {
             // PopClip-style: browsers/Electron often hide selection from AX — brief ⌘C.
             text = ClipboardSelection.readSelectedText()
         }
@@ -174,12 +192,17 @@ final class SelectionWatcher {
     private static func shouldUseClipboardFallback(
         isDrag: Bool,
         isDouble: Bool,
-        dragDistance: CGFloat
+        dragDistance: CGFloat,
+        dragDX: CGFloat,
+        dragDY: CGFloat
     ) -> Bool {
         if isDouble { return true }
         guard isDrag else { return false }
-        // Too short: jitter. Too long: likely dragging the browser window.
-        return dragDistance >= 10 && dragDistance <= 420
+        guard dragDistance >= 10 else { return false }
+        // Top-to-bottom (vertical-dominant) selection can be long; allow a higher cap.
+        // Horizontal-heavy long moves more often mean dragging the window.
+        let maxDist: CGFloat = (dragDY >= dragDX) ? 1200 : 420
+        return dragDistance <= maxDist
     }
 
     /// Single-line selection that looks like a filename (with extension) — common false positive on web pages.

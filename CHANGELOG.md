@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.3] — 2026-07-24
+
+### Fixed
+
+- Clipboard ⌘C fallback: require pasteboard `changeCount` to change; do not resurface stale clipboard text when dragging a page/window with no selection
+- Vertical (top-to-bottom) multi-line selection: allow a higher drag-distance cap for vertical-dominant gestures
+
+### Improved
+
+- Copy tip: click anywhere on the tip surface to copy (including click-through via global monitor)
+
 ## [0.1.2] — 2026-07-24
 
 ### Improved

@@ -31,7 +31,8 @@ final class CopyTip {
         let h: CGFloat = 32
         btn.frame = CGRect(x: padding, y: (h - btn.bounds.height) / 2, width: w - padding * 2, height: btn.bounds.height)
 
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: w, height: h))
+        let container = TipClickView(frame: NSRect(x: 0, y: 0, width: w, height: h))
+        container.onClick = { [weak self] in self?.copyTapped() }
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.92).cgColor
         container.layer?.cornerRadius = 8
@@ -57,7 +58,7 @@ final class CopyTip {
         panel.orderFrontRegardless()
         self.panel = panel
 
-        // Avoid instantly dismissing from the same mouse-up that showed the tip.
+        // Avoid instantly dismissing / copying from the same mouse-up that showed the tip.
         ignoreDismissUntil = Date().addingTimeInterval(0.25)
         installDismissMonitor()
     }
@@ -78,9 +79,11 @@ final class CopyTip {
 
     private func installDismissMonitor() {
         removeDismissMonitor()
-        dismissMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+        // Global monitor: nonactivating tip often lets clicks pass through —
+        // treat a click inside the tip frame as Copy; outside dismisses.
+        dismissMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             Task { @MainActor in
-                self?.handleOutsideClick(event)
+                self?.handleClickWhileVisible()
             }
         }
     }
@@ -92,11 +95,13 @@ final class CopyTip {
         }
     }
 
-    private func handleOutsideClick(_ event: NSEvent) {
+    private func handleClickWhileVisible() {
         guard Date() >= ignoreDismissUntil else { return }
         guard let panel else { return }
         let screenPoint = NSEvent.mouseLocation
-        if !panel.frame.contains(screenPoint) {
+        if panel.frame.contains(screenPoint) {
+            copyTapped()
+        } else {
             hide()
         }
     }
@@ -113,4 +118,15 @@ final class CopyTip {
         origin.y = min(max(origin.y, screen.minY + 6), screen.maxY - size.height - 6)
         panel.setFrameOrigin(origin)
     }
+}
+
+/// Whole tip surface is clickable (padding + label).
+private final class TipClickView: NSView {
+    var onClick: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        onClick?()
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }

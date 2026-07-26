@@ -27,6 +27,14 @@ enum ClipboardSelection {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
         }
 
+        // Pasteboard never changed → ⌘C copied nothing, i.e. there was no real selection
+        // (e.g. dragging a webpage/window/scrollbar, no text under the cursor). Do NOT fall
+        // back to whatever was already on the clipboard — that would resurface stale text.
+        guard pb.changeCount != before else {
+            restore(saved)
+            return nil
+        }
+
         // When a web/cloud file is selected, clipboard often carries a file URL — not text selection.
         if containsFilePayload(pb) {
             restore(saved)
