@@ -66,6 +66,21 @@ enum ScreenCaptureService {
         return max(1, Int(screen.backingScaleFactor))
     }
 
+    // MARK: - Frozen backdrop for selection UI
+
+    /// Fast, synchronous full-screen snapshot used only as a frozen backdrop while the user
+    /// is dragging out a selection — so the desktop looks fixed at the moment the shortcut was
+    /// pressed, instead of showing live/moving content underneath the dimmed overlay.
+    /// This does not affect the actual capture path used when the selection is confirmed.
+    static func captureScreenSnapshot(_ screen: NSScreen) -> CGImage? {
+        CGWindowListCreateImage(
+            screen.frame,
+            .optionOnScreenOnly,
+            kCGNullWindowID,
+            [.bestResolution]
+        )
+    }
+
     // MARK: - Legacy
 
     private static func captureLegacy(rect: CGRect) -> Result<CGImage, SnapCopyError> {

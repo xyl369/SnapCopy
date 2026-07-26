@@ -15,7 +15,7 @@
 SnapCopy is a lightweight macOS menu bar utility that does exactly two things:
 
 1. **Select to copy** — Highlight text and a small **Copy** button appears below your cursor. Click elsewhere to dismiss.
-2. **Region screenshot** — Press **⌥Z**, drag to select an area, resize if needed, confirm — the image goes to your clipboard.
+2. **Region screenshot** — Press **⌥Z**. The desktop freezes; hover a fully visible window (or outside windows for full screen), click to lock, adjust if needed, then Confirm — the image goes to your clipboard. Drag still works for a custom region.
 
 Built for one job: select-to-copy plus a region screenshot hotkey.
 
@@ -24,7 +24,7 @@ Built for one job: select-to-copy plus a region screenshot hotkey.
 | Feature | Description |
 |---------|-------------|
 | Select to copy | Drag-select or double-click → **Copy** tip below cursor |
-| Region capture | `⌥Z` with size badge and resize handles |
+| Region capture | `⌥Z` — freeze backdrop, window / full-screen hover, drag, resize, Confirm |
 | Smart filtering | No false tips when selecting files in Finder or on web pages |
 | Electron fallback | Brief ⌘C simulation when Accessibility API fails |
 | Menu bar | Status, screenshot shortcut, quit |
@@ -88,7 +88,7 @@ SnapCopy/
 Scripts/build_app.sh
 ```
 
-~12 Swift files, no third-party dependencies.
+~13 Swift files, no third-party dependencies.
 
 ### Known limitations
 
@@ -110,7 +110,7 @@ Issues and PRs welcome. Please keep the scope: **local, minimal, no network**.
 SnapCopy 是一个轻量的 macOS 菜单栏工具，只做两件事：
 
 1. **划词复制** — 选中文字后，在鼠标下方弹出 **Copy**；点别处消失
-2. **区域截屏** — 按 **⌥Z** 拖拽框选，可调大小，确认后图片进入剪贴板
+2. **区域截屏** — 按 **⌥Z**，桌面画面固定；悬停完整可见窗口（或窗口外预选整屏），点击锁定，可再调整后 Confirm，图片进入剪贴板。拖拽仍可自定义框选
 
 适合只要「选中即复制 + 快捷键截屏」的场景。
 
@@ -119,7 +119,7 @@ SnapCopy 是一个轻量的 macOS 菜单栏工具，只做两件事：
 | 功能 | 说明 |
 |------|------|
 | 划词复制 | 拖选或双击选词 → 鼠标下方弹出 **Copy** |
-| 区域截屏 | `⌥Z` 框选，带尺寸提示与拖拽手柄 |
+| 区域截屏 | `⌥Z` — 冻结画面、窗口/整屏悬停预选、拖拽框选、尺寸手柄、Confirm |
 | 智能过滤 | Finder 操作文件、网页选附件/文件名时不误弹提示 |
 | Electron 兼容 | Accessibility 读不到选区时，短暂模拟 ⌘C |
 | 菜单栏 | 状态、截屏快捷键、退出 |
@@ -172,7 +172,7 @@ open dist/SnapCopy.app
 
 ### 项目结构
 
-约 12 个 Swift 文件，无第三方依赖。目录结构见上方 English 章节。
+约 13 个 Swift 文件，无第三方依赖。目录结构见上方 English 章节。
 
 ### 已知限制
 

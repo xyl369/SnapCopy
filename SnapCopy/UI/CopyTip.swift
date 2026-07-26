@@ -18,12 +18,16 @@ final class CopyTip {
         hide()
         self.text = text
 
+        // Fixed light-style look (matches the Confirm/Cancel buttons in the selection overlay) —
+        // deliberately does NOT follow system dark/light mode, so it never looks mismatched.
         let btn = NSButton(title: "Copy", target: self, action: #selector(copyTapped))
         btn.bezelStyle = .inline
         btn.isBordered = false
-        btn.font = .systemFont(ofSize: 13, weight: .medium)
-        btn.contentTintColor = .labelColor
         btn.setButtonType(.momentaryChange)
+        btn.attributedTitle = NSAttributedString(string: "Copy", attributes: [
+            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+            .foregroundColor: NSColor.black.withAlphaComponent(0.88),
+        ])
 
         let padding: CGFloat = 10
         btn.sizeToFit()
@@ -34,10 +38,10 @@ final class CopyTip {
         let container = TipClickView(frame: NSRect(x: 0, y: 0, width: w, height: h))
         container.onClick = { [weak self] in self?.copyTapped() }
         container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.92).cgColor
+        container.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.96).cgColor
         container.layer?.cornerRadius = 8
         container.layer?.borderWidth = 0.5
-        container.layer?.borderColor = NSColor.separatorColor.cgColor
+        container.layer?.borderColor = NSColor.black.withAlphaComponent(0.12).cgColor
         container.addSubview(btn)
 
         let panel = NSPanel(
@@ -46,6 +50,7 @@ final class CopyTip {
             backing: .buffered,
             defer: false
         )
+        panel.appearance = NSAppearance(named: .aqua)
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true

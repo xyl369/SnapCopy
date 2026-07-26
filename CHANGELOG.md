@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.4] — 2026-07-26
+
+### Added
+
+- Screenshot: freeze the desktop at the moment ⌥Z is pressed (stable backdrop while selecting)
+- Screenshot: hover a fully visible window to preview it; click to lock, then Confirm to capture
+- Screenshot: hover outside windows (desktop gap, menu bar, Dock, screen edge) to preview the full screen
+
+### Fixed
+
+- Selection preview no longer mirrors when painting the frozen backdrop
+- Occluded windows are not offered for auto-frame (only fully visible windows)
+- Dock / menu bar strips are not treated as app windows
+- Copy tip uses a fixed light style and no longer follows system appearance
+
 ## [0.1.3] — 2026-07-24
 
 ### Fixed
