@@ -1,0 +1,18 @@
+# Build output
+dist/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Xcode (if added later)
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+DerivedData/
+
+# Editor
+.idea/
+*.swp
+*~
