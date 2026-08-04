@@ -1,10 +1,44 @@
 # SnapCopy
 
-**Select-to-copy + region screenshot · runs locally · no network requests**
+**Select-to-copy + region screenshot · fully local · zero network**
 
-**划词复制 + 区域截屏 · 本地运行 · 无网络请求**
+**划词复制 + 区域截屏 · 纯本地 · 零网络请求**
 
-[English](#english) · [中文](#中文) · [Changelog](CHANGELOG.md) · [License](LICENSE)
+No analytics · no auto-update · no cloud · no China-vendor SDKs  
+无埋点 · 无自动更新 · 无云 · 无国产厂商 SDK
+
+[English](#english) · [中文](#中文) · [Threat model](#threat-model--威胁模型) · [Changelog](CHANGELOG.md) · [License](LICENSE)
+
+---
+
+## Threat model / 威胁模型
+
+| Goal | Status |
+|------|--------|
+| Avoid **China-company** monitoring / SDKs / account upload | **Yes** — no network stack in app code |
+| Keep selections & screenshots **on this Mac only** | **Yes** — clipboard only |
+| Pure local / offline usable | **Yes** — no HTTP, no phone-home |
+| Auditable source | **Yes** — ~13 Swift files, no third-party deps |
+
+**What leaves the machine**
+
+| Data | Destination |
+|------|-------------|
+| Selected text / screenshot pixels | **Nowhere** — only system clipboard |
+| Telemetry / crash reports / update checks | **None** in source |
+
+**Permissions (local only)**
+
+| Permission | Why |
+|------------|-----|
+| Accessibility | Read selection; brief ⌘C fallback in some Electron apps |
+| Screen Recording | Capture the region you choose |
+
+**What this is *not***
+
+- Not a PopClip clone with plugins / AI / cloud translate
+- Not a Chinese vendor “划词” client
+- Not notarized by Apple by default (ad-hoc signed Release — prefer build from source if you require a trust chain)
 
 ---
 
@@ -12,18 +46,18 @@
 
 ### What is SnapCopy?
 
-SnapCopy is a lightweight macOS menu bar utility that does exactly two things:
+A lightweight macOS menu bar utility that does exactly two things:
 
-1. **Select to copy** — Highlight text and a small **Copy** button appears below your cursor. Click elsewhere to dismiss.
+1. **Select to copy** — Highlight text → **Copy** tip below the cursor; click elsewhere to dismiss.
 2. **Region screenshot** — Press **⌥Z**. The desktop freezes first (including Dock menus/popovers); hover a fully visible window (or outside windows for full screen), click to lock, adjust if needed, then Confirm — the image is cropped from that freeze onto your clipboard. Drag still works for a custom region.
 
-Built for one job: select-to-copy plus a region screenshot hotkey.
+Built for one job: select-to-copy plus a region screenshot hotkey — **without** network, AI, or vendor telemetry.
 
 ### Features
 
 | Feature | Description |
 |---------|-------------|
-| Select to copy | Drag-select or double-click → **Copy** tip below cursor |
+| Select to copy | Drag-select or double-click → **Copy** tip |
 | Region capture | `⌥Z` — freeze backdrop, window / full-screen hover, drag, resize, Confirm |
 | Smart filtering | No false tips when selecting files in Finder or on web pages |
 | Electron fallback | Brief ⌘C simulation when Accessibility API fails |
@@ -31,15 +65,15 @@ Built for one job: select-to-copy plus a region screenshot hotkey.
 
 ### Install
 
-**Option 1: Download Release (recommended)**
+**Option 1: Download Release**
 
-1. Go to [Releases](https://github.com/xyl369/SnapCopy/releases) and download the latest `.zip`
-2. Extract `SnapCopy.app` to a fixed location (e.g. Applications)
+1. [Releases](https://github.com/xyl369/SnapCopy/releases) → latest `.zip`
+2. Put `SnapCopy.app` in a fixed path (e.g. Applications)
 3. Grant permissions below, then relaunch
 
-> Currently ad-hoc signed. If macOS blocks it, right-click → Open, or build from source.
+> Ad-hoc signed. If macOS blocks it: right-click → Open, or **build from source** (recommended for trust).
 
-**Option 2: Build from source**
+**Option 2: Build from source (preferred for audit)**
 
 ```bash
 git clone https://github.com/xyl369/SnapCopy.git
@@ -56,50 +90,43 @@ open dist/SnapCopy.app
 
 ### Permissions
 
-1. Open **System Settings → Privacy & Security**
-2. **Accessibility** — Add the `SnapCopy.app` you actually run (one fixed path only)
-3. **Screen Recording** — Add the same `.app`
+1. **System Settings → Privacy & Security**
+2. **Accessibility** — add the `SnapCopy.app` you actually run (one fixed path)
+3. **Screen Recording** — same `.app`
 4. Remove stray black `exec` entries; keep only the `.app`
-5. Quit and relaunch SnapCopy
+5. Quit and relaunch
 
-When the menu bar shows **Ready · select to copy · ⌥Z screenshot**, you're set.
+Menu bar: **Ready · select to copy · ⌥Z screenshot** means OK.
 
 ### Privacy & technical notes
 
-**No network requests** in source — no HTTP, analytics, or auto-update. Screenshots and selections stay on your machine (clipboard only).
+Source contains **no network requests** — no `URLSession`, analytics, or auto-update. Selections and screenshots stay on-device (clipboard only).
 
-| Permission | Why |
-|------------|-----|
-| Accessibility | Read selected text; briefly simulate ⌘C in some apps |
-| Screen Recording | Capture the region you select |
-
-**⌘C fallback:** In Electron apps (Cursor, Chrome, etc.), when the Accessibility API cannot read the selection, SnapCopy briefly sends ⌘C, reads the clipboard, then restores the previous clipboard contents. This only happens on text selection — no background keylogging.
+**⌘C fallback:** In Electron apps (e.g. Chrome, some editors), when Accessibility cannot read the selection, SnapCopy briefly sends ⌘C, reads the clipboard, then restores prior clipboard contents. Only on text selection — not background keylogging.
 
 ### Project structure
 
 ```
 SnapCopy/
 ├── App/           # Entry, menu bar, permissions
-├── Capture/       # Region screenshot UI + ScreenCaptureKit
-├── Hotkey/        # ⌥Z global hotkey
-├── Selection/     # Selection watcher, AX, clipboard fallback
-├── UI/            # Copy tip overlay
+├── Capture/       # Region screenshot + ScreenCaptureKit
+├── Hotkey/        # ⌥Z
+├── Selection/     # Watcher, AX, clipboard fallback
+├── UI/            # Copy tip
 └── Support/       # entitlements
 Scripts/build_app.sh
 ```
 
-~13 Swift files, no third-party dependencies.
-
 ### Known limitations
 
-- Some apps don't expose selections via Accessibility API (⌘C fallback attempted)
-- No copy tip when selecting files in Finder or on web pages
+- Some apps do not expose selection via AX (⌘C fallback attempted)
+- No copy tip when selecting files in Finder or file names on web pages
 - Ad-hoc signed — redistribute with your own signing/notarization
 - Tested mainly on Apple Silicon + macOS 14+
 
 ### Contributing
 
-Issues and PRs welcome. Please keep the scope: **local, minimal, no network**.
+Keep the boundary: **local, minimal, zero network, no vendor SDKs**.
 
 ---
 
@@ -107,34 +134,27 @@ Issues and PRs welcome. Please keep the scope: **local, minimal, no network**.
 
 ### 这是什么
 
-SnapCopy 是一个轻量的 macOS 菜单栏工具，只做两件事：
+轻量 macOS 菜单栏工具，只做两件事：
 
-1. **划词复制** — 选中文字后，在鼠标下方弹出 **Copy**；点别处消失
-2. **区域截屏** — 按 **⌥Z**，先冻结整屏（含 Dock 弹出菜单等）；悬停完整可见窗口（或窗口外预选整屏），点击锁定，可再调整后 Confirm；最终图从冻结缓冲裁切进剪贴板。拖拽仍可自定义框选
+1. **划词复制** — 选中文字后弹出 **Copy**  
+2. **区域截屏** — **⌥Z** 冻结整屏后框选，图进剪贴板  
 
-适合只要「选中即复制 + 快捷键截屏」的场景。
+适合要「选中即复制 + 快捷键截屏」，且要求**无网络、无埋点、无国产划词客户端**的场景。
 
 ### 功能
 
 | 功能 | 说明 |
 |------|------|
-| 划词复制 | 拖选或双击选词 → 鼠标下方弹出 **Copy** |
-| 区域截屏 | `⌥Z` — 冻结画面、窗口/整屏悬停预选、拖拽框选、尺寸手柄、Confirm |
-| 智能过滤 | Finder 操作文件、网页选附件/文件名时不误弹提示 |
-| Electron 兼容 | Accessibility 读不到选区时，短暂模拟 ⌘C |
-| 菜单栏 | 状态、截屏快捷键、退出 |
+| 划词复制 | 拖选 / 双击 → **Copy** |
+| 区域截屏 | `⌥Z` 冻结、窗口/整屏预选、拖拽、Confirm |
+| 智能过滤 | Finder / 网页选文件名时不误弹 |
+| Electron 兼容 | AX 读不到时短暂模拟 ⌘C |
+| 菜单栏 | 状态、快捷键、退出 |
 
 ### 安装
 
-**方式一：下载 Release（推荐）**
-
-1. 打开 [Releases](https://github.com/xyl369/SnapCopy/releases) 下载最新 `.zip`
-2. 解压后将 `SnapCopy.app` 放到固定路径（建议「应用程序」）
-3. 按下方权限设置授权后重新打开
-
-> 当前为 ad-hoc 签名。若 macOS 拦截，请右键 → 打开，或从源码编译。
-
-**方式二：从源码编译**
+**方式一：Release** — [Releases](https://github.com/xyl369/SnapCopy/releases)  
+**方式二：源码编译（更利于审计）**
 
 ```bash
 git clone https://github.com/xyl369/SnapCopy.git
@@ -143,47 +163,17 @@ cd SnapCopy
 open dist/SnapCopy.app
 ```
 
-### 系统要求
+### 权限
 
-- macOS **14.0+**
-- 默认 Apple Silicon（`arm64`）；Intel 请修改 `Scripts/build_app.sh` 中的 `-target`
-- Xcode Command Line Tools
+辅助功能 + 屏幕录制，添加你实际运行的那个 `SnapCopy.app`。
 
-### 权限设置
+### 隐私
 
-1. 打开 **系统设置 → 隐私与安全性**
-2. **辅助功能** — 添加你实际运行的 `SnapCopy.app`（固定一个路径）
-3. **屏幕录制** — 添加同一个 `.app`
-4. 删除列表中黑色的 `exec` 条目，只保留 `.app`
-5. 退出并重新打开 SnapCopy
-
-菜单栏显示 **Ready · select to copy · ⌥Z screenshot** 即表示正常。
-
-### 隐私与技术说明
-
-源码中**无网络请求** — 无 HTTP、无埋点、无自动更新。截屏与选区内容只写入本机剪贴板。
-
-| 权限 | 用途 |
-|------|------|
-| 辅助功能 | 读取选中文字；在部分 App 中短暂模拟 ⌘C |
-| 屏幕录制 | 截取你框选的屏幕区域 |
-
-**⌘C 回退：** 在 Cursor、Chrome 等 Electron 应用中，Accessibility API 有时读不到选区。SnapCopy 会短暂发送一次 ⌘C、读取剪贴板，然后尽量恢复原剪贴板内容。仅在划词触发时发生，不会后台监听键盘。
-
-### 项目结构
-
-约 13 个 Swift 文件，无第三方依赖。目录结构见上方 English 章节。
-
-### 已知限制
-
-- 部分 App 无法通过 Accessibility API 读取选区（会尝试 ⌘C 回退）
-- Finder 内操作文件、网页选中文件名时不显示复制提示
-- ad-hoc 签名，分发给他人需自行签名或公证
-- 主要在 Apple Silicon + macOS 14+ 上测试
+源码**无网络请求**；选区与截屏只进本机剪贴板。无埋点、无自动更新、无云同步。
 
 ### 参与贡献
 
-欢迎 Issue 与 PR。请保持「本地、极简、无网络」的产品边界。
+保持「本地、极简、零网络、无厂商 SDK」。
 
 ---
 

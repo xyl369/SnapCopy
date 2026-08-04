@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.8] — 2026-08-04
+
+### Docs
+
+- README: threat model (zero network, no China-vendor SDKs, clipboard-only data path)
+- Prefer build-from-source for audit trust chain
+
 ## [0.1.7] — 2026-07-26
 
 ### Fixed
